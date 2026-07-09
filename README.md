@@ -1,5 +1,7 @@
 # magic
 
+[![CI](https://github.com/lispnik/magic/actions/workflows/ci.yml/badge.svg)](https://github.com/lispnik/magic/actions/workflows/ci.yml)
+
 A pure **Common Lisp** reimplementation of [`file(1)`](https://github.com/file/file)'s
 magic-based content detection. It reads `file`'s own *magic* pattern database
 (the human-readable source fragments in `magic/Magdir/`) and evaluates those

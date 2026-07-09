@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Build & test (SBCL + ocicl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SBCL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sbcl build-essential git
+
+      - name: Install ocicl
+        run: |
+          git clone --depth 1 https://github.com/ocicl/ocicl.git /tmp/ocicl
+          make -C /tmp/ocicl
+          sudo make -C /tmp/ocicl install
+
+      - name: Configure ocicl
+        run: |
+          ocicl setup
+          cat > "$HOME/.sbclrc" <<'EOF'
+          #-ocicl
+          (when (probe-file #P"~/.local/share/ocicl/ocicl-runtime.lisp")
+            (load #P"~/.local/share/ocicl/ocicl-runtime.lisp"))
+          (asdf:initialize-source-registry
+            (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))
+          EOF
+
+      - name: Restore dependencies (pinned in ocicl.csv)
+        run: ocicl install
+
+      - name: Run test suite
+        run: |
+          sbcl --non-interactive \
+            --eval '(handler-bind ((warning (function muffle-warning))) (asdf:load-system "magic/tests"))' \
+            --eval '(uiop:quit (if (fiveam:run! (quote magic/tests:all-tests)) 0 1))'
+
+      - name: Smoke-test the CLI (source-load path)
+        run: |
+          printf '\211PNG\r\n\032\n\000\000\000\015IHDR\000\000\000\001\000\000\000\001\010\002' > /tmp/x.png
+          sbcl --non-interactive \
+            --eval '(handler-bind ((warning (function muffle-warning))) (asdf:load-system "magic"))' \
+            --eval '(format t "~&CLI: ~A~%" (magic:file-type "/tmp/x.png"))' \
+            --eval '(uiop:quit (if (search "PNG" (magic:file-type "/tmp/x.png")) 0 1))'
