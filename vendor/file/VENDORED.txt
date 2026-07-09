@@ -1,0 +1,11 @@
+Vendored copy of the file(1) / libmagic source tree.
+
+Upstream:  https://github.com/file/file
+Commit:    5429660069b729e9f332c94f4399e4f7b2f97986
+Date:      2026-07-06
+
+Only the magic pattern sources under magic/Magdir/ are consumed by this
+project; the rest of the tree is kept so the magic database can be regenerated
+/ refreshed straight from upstream.
+
+To refresh this copy, run:  scripts/vendor-file.sh

@@ -1,0 +1,176 @@
+# magic
+
+A pure **Common Lisp** reimplementation of [`file(1)`](https://github.com/file/file)'s
+magic-based content detection. It reads `file`'s own *magic* pattern database
+(the human-readable source fragments in `magic/Magdir/`) and evaluates those
+patterns against your data to identify file types — no `libmagic`, no FFI.
+
+```lisp
+(magic:file-type "/etc/hosts")          ; => "ASCII text"
+(magic:mime-type "photo.png")           ; => "image/png"
+(magic:describe-file "archive.tar.gz")  ; prints: archive.tar.gz: gzip compressed data ... [application/gzip]
+```
+
+```console
+$ bin/magic samples/*.png samples/a.pdf
+samples/a.png: PNG image data, 1 x 1, 8-bit/color RGB, non-interlaced
+samples/a.pdf: PDF document, version 1.4
+```
+
+The upstream `file` source tree is **vendored** under `vendor/file/` so the
+magic database can be (re)generated straight from `file`'s magic DSL — see
+[Re-vendoring](#re-vendoring).
+
+## Requirements
+
+- [SBCL](http://www.sbcl.org/)
+- [ocicl](https://github.com/ocicl/ocicl) for dependency management
+- Dependencies (installed via ocicl): `cl-ppcre`, and for tests `fiveam`
+
+The project was scaffolded and its dependencies fetched with:
+
+```console
+$ ocicl install cl-ppcre fiveam
+```
+
+`ocicl setup` must have been run once (it wires ocicl into your `~/.sbclrc`).
+
+## Usage
+
+### From the REPL
+
+```lisp
+(asdf:load-system "magic")
+
+;; File-oriented (reads a bounded prefix of the file)
+(magic:file-type   #p"/bin/ls")        ; human-readable description
+(magic:mime-type   #p"/bin/ls")        ; MIME type
+(magic:describe-file #p"/bin/ls")      ; prints a `file`-style line, returns a result
+
+;; Buffer-oriented (identify bytes already in memory)
+(magic:buffer-type       #(#x89 80 78 71 13 10 26 10))  ; "PNG image data, ..."
+(magic:buffer-mime-type  "%PDF-1.7")                    ; "application/pdf"
+
+;; Rich result object
+(let ((r (magic::buffer-match (coerce '(#x1f #x8b 8) '(vector (unsigned-byte 8))))))
+  (magic:result-description r)   ; the full description string
+  (magic:result-mime-type   r)   ; MIME type, or NIL
+  (magic:result-extensions  r)   ; list of extensions, e.g. ("gz")
+  (magic:result-strength    r))  ; the matched rule's strength score
+```
+
+The database is loaded lazily on first use from the vendored `Magdir` and
+cached (`magic:default-database`). You can also build your own:
+
+```lisp
+(let ((db (magic:make-database)))
+  (magic:load-magic-directory db #p"/usr/share/file/magic/")   ; a directory of fragments
+  ;; or a single fragment file:
+  (magic:load-magic-file db #p"my-formats.magic")
+  (magic:file-type "something.dat" :database db))
+```
+
+### Command line
+
+`bin/magic` is a small `file`-like driver:
+
+```console
+$ bin/magic FILE...            # print "path: description"
+$ bin/magic --mime FILE...     # print "path: mime/type"
+```
+
+## How it works
+
+Each line of a magic fragment is a *test*: `offset  type  test  message`,
+with `>`-prefixed continuation lines forming a tree of sub-tests. The pipeline:
+
+| Stage | File | Responsibility |
+|-------|------|----------------|
+| Byte buffer | `src/buffer.lisp` | endian-aware integer/float reads, bounds checks |
+| Escapes/printf | `src/escapes.lisp` | C-string escape decoding, printf-style message formatting |
+| Type table | `src/types.lisp` | the ~80 magic base types and their sizes/endianness |
+| Parser | `src/parser.lisp` | DSL → `entry` trees (offsets, masks, flags, operators, `!:` annotations) |
+| Evaluator | `src/evaluator.lisp` | offset resolution, comparisons, `use`/`name`/`indirect` recursion, strength |
+| Database | `src/database.lisp` | loading a `Magdir`, named-entry table, strength-ordered matching |
+| API | `src/api.lisp` | `file-type` / `mime-type` / `describe-file`, text fallback, CLI |
+
+The parser and evaluator were written against `MAGIC(5)` and cross-checked
+against `file`'s own `apprentice.c` / `softmagic.c` (vendored) for the fiddly
+parts — indirect-offset arithmetic, the strength formula, `default`/`clear`
+continuation semantics, and the `\b` no-space message join.
+
+### Supported
+
+- Offsets: absolute, negative-from-EOF (level 0), relative (`&`), and indirect
+  reads `(( x [.,type][op][( ]y ))` with all the documented type letters and
+  `+ - * / % & | ^` arithmetic
+- Numeric/date/float types in native/BE/LE/middle endianness, signed and
+  unsigned, with `& | ^ + - * / %` masks and `~` inversion
+- Operators `= != < > & ^ ~ x`
+- `string` (incl. `c`/`C` case-insensitivity), `pstring`, `search`, `regex`
+  (via `cl-ppcre`)
+- `name`/`use` subroutines (including `^name` endianness flipping) and
+  `indirect` re-scans
+- `default`/`clear` continuation logic
+- `!:mime`, `!:ext`, `!:apple`, `!:strength` annotations
+- printf-style message formatting and the `\b` separator rules
+- Strength scoring that mirrors `file`'s rule ordering
+- A small text-vs-binary fallback (ASCII / ISO-8859 text)
+
+### Known limitations
+
+Not a byte-for-byte clone of a specific `file` release. In particular:
+
+- `der` (DER certificate) and `guid` value tests are parsed but not evaluated
+- Some string flags (`W`, `w`, `T`, `t`, `b`, full-word `f`) are accepted but
+  only partially honoured; matching is otherwise exact/case-insensitive
+- Text detection is a lightweight heuristic, not `file`'s full encoding
+  analysis (no "with CRLF line terminators", charset sniffing, etc.)
+- Results track the **vendored** database version, which may differ from the
+  `file` binary installed on your system (e.g. `font/ttf` vs `font/sfnt`)
+
+On a sample of real files, MIME output agrees with the system `file` ~86%,
+with the remaining differences attributable to database-version drift rather
+than engine behaviour.
+
+## Testing
+
+```console
+$ sbcl --eval '(asdf:test-system "magic")' --quit
+# or
+$ sbcl --eval '(asdf:load-system "magic/tests")' \
+       --eval '(fiveam:run! (quote magic/tests:all-tests))' --quit
+```
+
+The suite (`tests/`) covers the low-level parser units (integer/escape/offset
+parsing, type lookup, masks), printf formatting, numeric comparison, a couple
+of hand-written mini-databases exercising the engine (including indirect
+offsets), and end-to-end detection of PNG/GIF/JPEG/PDF/gzip/ELF/BMP/ZIP/class
+plus text — all against the vendored database.
+
+## Re-vendoring
+
+To refresh the vendored `file` sources (and therefore the magic database):
+
+```console
+$ scripts/vendor-file.sh
+```
+
+This re-clones upstream, strips its `.git`, and records the commit in
+`vendor/file/VENDORED.txt`. Only `vendor/file/magic/Magdir/` is consumed at
+runtime; the rest is kept for provenance and regeneration.
+
+## Layout
+
+```
+magic.asd              system + test-system definitions
+src/                   library sources (see table above)
+tests/                 fiveam suite + in-memory fixtures
+bin/magic              file(1)-like CLI wrapper
+scripts/vendor-file.sh refresh the vendored magic database
+vendor/file/           vendored upstream file(1) source (magic/Magdir/ is used)
+```
+
+## License
+
+BSD-2-Clause (matching `file`'s licensing of the magic database it builds on).

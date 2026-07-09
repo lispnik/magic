@@ -1,0 +1,21 @@
+# Lisp build artifacts
+*.fasl
+*.fasl-*
+*.lx64fsl
+*.dx64fsl
+.cache/
+system-index.txt
+
+# ocicl-managed dependency cache (re-fetch with `ocicl install`)
+/ocicl/
+
+# Built images
+/magic-image
+/bin/*.core
+
+# Editor / OS
+*~
+.DS_Store
+
+# Local Claude Code settings
+.claude/

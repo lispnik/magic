@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# A `file`-like command line driver for the pure-Lisp magic library.
+#
+#   bin/magic [--mime] FILE...
+#
+# Loads the system fresh each run via SBCL/ocicl; for repeated use prefer
+# building an image with `scripts/build-image.sh`.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+exec sbcl --noinform \
+  --eval "(handler-bind ((warning #'muffle-warning)) (let ((*standard-output* (make-broadcast-stream))) (asdf:load-system \"magic\")))" \
+  --eval "(uiop:quit (magic::run-cli (uiop:command-line-arguments)))" \
+  --end-toplevel-options "$@"
