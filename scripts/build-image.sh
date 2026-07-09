@@ -7,7 +7,7 @@
 # :entry-point in magic.asd -- with a warm-up step so the database is already
 # resident in the dumped image.
 #
-# Output:  bin/magic.bin   (invoked automatically by bin/magic when present)
+# Output:  bin/magic   (a standalone executable, ~50MB, gitignored)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -19,6 +19,6 @@ sbcl --noinform --disable-ldb --non-interactive \
   --eval '(progn (format t "~&;; parsing magic database...~%") (magic:default-database) (format t ";; ~A rules resident in image~%" (magic:database-entry-count (magic:default-database))))' \
   --eval '(asdf:operate (quote asdf:program-op) "magic")'
 
-OUT="$ROOT/bin/magic.bin"
+OUT="$ROOT/bin/magic"
 chmod +x "$OUT"
 echo ">> Built $OUT ($(du -h "$OUT" | cut -f1))"

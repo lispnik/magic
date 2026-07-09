@@ -6,18 +6,19 @@
   :license "BSD-2-Clause"
   :version "0.1.0"
   :depends-on ("cl-ppcre")
-  :serial t
-  :components ((:file "src/packages")
-               (:file "src/buffer")
-               (:file "src/escapes")
-               (:file "src/types")
-               (:file "src/parser")
-               (:file "src/evaluator")
-               (:file "src/database")
-               (:file "src/api"))
+  :components ((:module "src"
+               :serial t
+               :components ((:file "packages")
+                            (:file "buffer")
+                            (:file "escapes")
+                            (:file "types")
+                            (:file "parser")
+                            (:file "evaluator")
+                            (:file "database")
+                            (:file "api"))))
   ;; `asdf:make :magic` builds a standalone executable via uiop:dump-image.
   :build-operation "program-op"
-  :build-pathname "bin/magic.bin"
+  :build-pathname "bin/magic"
   :entry-point "magic::cli-toplevel"
   :in-order-to ((asdf:test-op (asdf:test-op "magic/tests"))))
 

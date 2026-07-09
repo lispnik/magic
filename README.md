@@ -72,24 +72,29 @@ cached (`magic:default-database`). You can also build your own:
 
 ### Command line
 
-`bin/magic` is a small `file`-like driver:
+Build the standalone `file`-like driver. The parsed magic database is baked
+into the image (via ASDF's `program-op`), so it starts in ~20 ms instead of
+re-parsing the ~350 fragments each run:
+
+```console
+$ scripts/build-image.sh       # asdf:make -> bin/magic (~50 MB, gitignored)
+```
+
+Then use it like `file`:
 
 ```console
 $ bin/magic FILE...            # print "path: description"
 $ bin/magic --mime FILE...     # print "path: mime/type"
 ```
 
-By default it loads the system (and re-parses the ~350 magic fragments) on
-every run — around 0.8 s of start-up. For instant start-up, build a standalone
-executable with the database baked in:
+To run without building an image, load the system and call the driver directly
+(~0.8 s of start-up while the database is parsed):
 
 ```console
-$ scripts/build-image.sh       # produces bin/magic.bin (~50 MB, gitignored)
-$ bin/magic samples/a.png      # now starts in ~25 ms; wrapper auto-uses the image
+$ sbcl --eval '(asdf:load-system "magic")' \
+       --eval '(uiop:quit (magic::run-cli (uiop:command-line-arguments)))' \
+       --end-toplevel-options --mime FILE...
 ```
-
-`bin/magic` prefers `bin/magic.bin` when present and falls back to the
-source-load path otherwise.
 
 ## How it works
 
@@ -178,7 +183,7 @@ runtime; the rest is kept for provenance and regeneration.
 magic.asd              system + test-system definitions
 src/                   library sources (see table above)
 tests/                 fiveam suite + in-memory fixtures
-bin/magic              file(1)-like CLI wrapper
+bin/magic              built standalone CLI (via scripts/build-image.sh; gitignored)
 scripts/vendor-file.sh refresh the vendored magic database
 vendor/file/           vendored upstream file(1) source (magic/Magdir/ is used)
 ```
