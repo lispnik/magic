@@ -7,15 +7,18 @@
   :version "0.1.0"
   :depends-on ("cl-ppcre")
   :serial t
-  :pathname "src"
-  :components ((:file "packages")
-               (:file "buffer")
-               (:file "escapes")
-               (:file "types")
-               (:file "parser")
-               (:file "evaluator")
-               (:file "database")
-               (:file "api"))
+  :components ((:file "src/packages")
+               (:file "src/buffer")
+               (:file "src/escapes")
+               (:file "src/types")
+               (:file "src/parser")
+               (:file "src/evaluator")
+               (:file "src/database")
+               (:file "src/api"))
+  ;; `asdf:make :magic` builds a standalone executable via uiop:dump-image.
+  :build-operation "program-op"
+  :build-pathname "bin/magic.bin"
+  :entry-point "magic::cli-toplevel"
   :in-order-to ((asdf:test-op (asdf:test-op "magic/tests"))))
 
 (asdf:defsystem "magic/tests"

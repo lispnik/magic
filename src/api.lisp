@@ -133,3 +133,10 @@ Handles the empty-file and directory cases the way file(1) does."
             (format t "~A: ERROR: ~A~%" p e)
             (setf code 1))))
       code)))
+
+(defun cli-toplevel ()
+  "Toplevel for a saved standalone image: identify the argument files, then exit.
+The magic database is already resident in the image, so start-up is immediate."
+  (uiop:quit
+   (handler-case (run-cli (uiop:command-line-arguments))
+     (error (e) (format *error-output* "magic: ~A~%" e) 1))))

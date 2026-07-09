@@ -79,6 +79,18 @@ $ bin/magic FILE...            # print "path: description"
 $ bin/magic --mime FILE...     # print "path: mime/type"
 ```
 
+By default it loads the system (and re-parses the ~350 magic fragments) on
+every run — around 0.8 s of start-up. For instant start-up, build a standalone
+executable with the database baked in:
+
+```console
+$ scripts/build-image.sh       # produces bin/magic.bin (~50 MB, gitignored)
+$ bin/magic samples/a.png      # now starts in ~25 ms; wrapper auto-uses the image
+```
+
+`bin/magic` prefers `bin/magic.bin` when present and falls back to the
+source-load path otherwise.
+
 ## How it works
 
 Each line of a magic fragment is a *test*: `offset  type  test  message`,

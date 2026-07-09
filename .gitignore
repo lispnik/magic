@@ -12,6 +12,7 @@ system-index.txt
 # Built images
 /magic-image
 /bin/*.core
+/bin/magic.bin
 
 # Editor / OS
 *~
