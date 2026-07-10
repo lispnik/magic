@@ -22,8 +22,10 @@
                       (split-on (acc-ext acc) #\/))
      :strength (acc-strength acc))))
 
-(defparameter *max-read-bytes* 1048576
-  "Upper bound on how many leading bytes of a file are read for identification.")
+(defparameter *max-read-bytes* (* 7 1024 1024)
+  "Upper bound on how many leading bytes of a file are read for identification.
+Defaults to 7 MiB, matching file(1)'s FILE_BYTES_MAX; larger files are examined
+only up to this prefix.")
 
 ;;; ---------------------------------------------------------------------------
 ;;; Text classification (a small stand-in for file(1)'s separate ascmagic pass)

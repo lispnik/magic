@@ -44,7 +44,7 @@ $ ocicl install cl-ppcre fiveam
 ```lisp
 (asdf:load-system "magic")
 
-;; File-oriented (reads a bounded prefix of the file)
+;; File-oriented (reads up to *max-read-bytes*, default 7 MiB, like file(1))
 (magic:file-type   #p"/bin/ls")        ; human-readable description
 (magic:mime-type   #p"/bin/ls")        ; MIME type
 (magic:describe-file #p"/bin/ls")      ; prints a `file`-style line, returns a result

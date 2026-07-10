@@ -509,4 +509,36 @@
     (declare (ignore out))
     (is (= 2 code))))
 
+;;; ---------------------------------------------------------------------------
+;;; File reading / the max-read-bytes cap
+
+(def-suite io :description "File reading and the read-size cap." :in all-tests)
+(in-suite io)
+
+(test default-read-cap-matches-file
+  ;; file(1)'s FILE_BYTES_MAX is 7 MiB
+  (is (= (* 7 1024 1024) magic::*max-read-bytes*)))
+
+(test read-file-into-buffer-bounds
+  (uiop:with-temporary-file (:pathname p)
+    (with-open-file (o p :direction :output :element-type '(unsigned-byte 8)
+                        :if-exists :supersede)
+      (write-sequence (make-array 5000 :element-type '(unsigned-byte 8) :initial-element 65) o))
+    (is (= 5000 (magic::buffer-length (magic::read-file-into-buffer p))))
+    (is (= 100 (magic::buffer-length (magic::read-file-into-buffer p :max-bytes 100))))))
+
+(test read-cap-bounds-matching
+  ;; a rule beyond the cap cannot match; within it, it can
+  (uiop:with-temporary-file (:pathname p)
+    (with-open-file (o p :direction :output :element-type '(unsigned-byte 8)
+                        :if-exists :supersede)
+      (write-sequence (make-array 200000 :element-type '(unsigned-byte 8) :initial-element 0) o)
+      (write-sequence (bv "DEEPSIG") o))          ; signature at offset 200000
+    (let ((db (magic::make-database)))
+      (magic::database-add-source db (format nil "200000	string	DEEPSIG	deep hit"))
+      (let ((magic::*max-read-bytes* 1048576))    ; reads past 200000 -> found
+        (is (string= "deep hit" (magic:file-type p :database db))))
+      (let ((magic::*max-read-bytes* 100000))     ; stops before 200000 -> not found
+        (is (string= "data" (magic:file-type p :database db)))))))
+
 (defun run-all () (run! 'all-tests))
