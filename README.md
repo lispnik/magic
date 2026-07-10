@@ -197,7 +197,6 @@ runtime; the rest is kept for provenance and regeneration.
 
 ```
 magic.asd              system + test-system definitions
-LICENSE                BSD-2-Clause
 src/                   library sources (see table above)
 tests/                 fiveam suite + in-memory fixtures
 bin/magic              built standalone CLI (via scripts/build-image.sh; gitignored)
