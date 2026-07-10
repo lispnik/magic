@@ -385,14 +385,34 @@ relative to OFF (implemented via the state bias)."
       (:date (format-magic-date value (ent-type entry)))
       (t value))))
 
-(defun format-magic-date (seconds mtype)
-  "Render SECONDS (Unix epoch) as a date string."
-  (declare (ignore mtype))
-  (handler-case
-      (multiple-value-bind (s mi h d mo y)
-          (decode-universal-time (+ (or seconds 0) 2208988800) 0)
-        (format nil "~4,'0D-~2,'0D-~2,'0D ~2,'0D:~2,'0D:~2,'0D" y mo d h mi s))
-    (error () (princ-to-string seconds))))
+(defparameter +day-names+
+  #("Mon" "Tue" "Wed" "Thu" "Fri" "Sat" "Sun"))
+(defparameter +month-names+
+  #("Jan" "Feb" "Mar" "Apr" "May" "Jun" "Jul" "Aug" "Sep" "Oct" "Nov" "Dec"))
+(defconstant +filetime-epoch-offset+ 11644473600
+  "Seconds between 1601-01-01 (Windows FILETIME epoch) and 1970-01-01 (Unix).")
+
+(defun date-type-local-p (name)  (and name (search "ldate" name) t))
+(defun date-type-windows-p (name) (and name (search "wdate" name) t))
+
+(defun format-magic-date (value mtype)
+  "Render VALUE as a date, matching file(1)'s asctime/ctime output.  The MTYPE
+name selects UTC vs. local time and Unix vs. Windows-FILETIME epoch:
+`*ldate' types are local, `*wdate' types are 100 ns ticks since 1601."
+  (let* ((name (and mtype (mtype-name mtype)))
+         (unix (if (date-type-windows-p name)
+                   (- (truncate (or value 0) 10000000) +filetime-epoch-offset+)
+                   (or value 0))))
+    (handler-case
+        (multiple-value-bind (s mi h d mo y dow)
+            (if (date-type-local-p name)
+                (decode-universal-time (+ unix 2208988800))
+                (decode-universal-time (+ unix 2208988800) 0))
+          ;; asctime: "Www Mmm DD HH:MM:SS YYYY" (day is width-3, space padded)
+          (format nil "~A ~A~3,' D ~2,'0D:~2,'0D:~2,'0D ~D"
+                  (svref +day-names+ dow) (svref +month-names+ (1- mo))
+                  d h mi s y))
+      (error () (princ-to-string value)))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Group evaluation (siblings at one continuation level)

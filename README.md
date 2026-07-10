@@ -87,6 +87,10 @@ Then use it like `file`:
 ```console
 $ bin/magic FILE...            # print "path: description"
 $ bin/magic --mime FILE...     # print "path: mime/type"
+$ bin/magic --extension FILE   # print "path: ext1/ext2"
+$ bin/magic -b FILE            # brief: description only, no filename
+$ cat FILE | bin/magic -       # read from standard input
+$ bin/magic --version
 ```
 
 To run without building an image, load the system and call the driver directly
@@ -133,8 +137,12 @@ continuation semantics, and the `\b` no-space message join.
 - `default`/`clear` continuation logic
 - `!:mime`, `!:ext`, `!:apple`, `!:strength` annotations
 - printf-style message formatting and the `\b` separator rules
+- `date` types rendered in `file`'s ctime style, with UTC/local selection and
+  Windows-FILETIME (`*wdate`) conversion
 - Strength scoring that mirrors `file`'s rule ordering
-- A small text-vs-binary fallback (ASCII / ISO-8859 text)
+- Text classification (ASCII / UTF-8 / UTF-16-BOM / ISO-8859, with CRLF/CR/no
+  line-terminator reporting), and the encoding appended to text-type matches
+  the way `file` does (e.g. `XML 1.0 document text, ASCII text`)
 
 ### Performance
 
@@ -154,8 +162,9 @@ Not a byte-for-byte clone of a specific `file` release. In particular:
 - `der` (DER certificate) and `guid` value tests are parsed but not evaluated
 - Some string flags (`W`, `w`, `T`, `t`, `b`, full-word `f`) are accepted but
   only partially honoured; matching is otherwise exact/case-insensitive
-- Text detection is a lightweight heuristic, not `file`'s full encoding
-  analysis (no "with CRLF line terminators", charset sniffing, etc.)
+- Text detection covers ASCII/UTF-8/UTF-16(BOM)/ISO-8859 with line-terminator
+  reporting, but not `file`'s full charset sniffing (code pages, UTF-16
+  without a BOM, EBCDIC, etc.)
 - Results track the **vendored** database version, which may differ from the
   `file` binary installed on your system (e.g. `font/ttf` vs `font/sfnt`)
 
@@ -172,14 +181,16 @@ $ sbcl --eval '(asdf:load-system "magic/tests")' \
        --eval '(fiveam:run! (quote magic/tests:all-tests))' --quit
 ```
 
-The suite (`tests/`, 140+ checks) covers the low-level parser units
+The suite (`tests/`, 160+ checks) covers the low-level parser units
 (integer/escape/offset parsing, type lookup, masks), printf formatting, numeric
 comparison, and hand-written mini-databases exercising the engine: `pstring`
-length prefixes, relative and negative-from-EOF offsets, dates, regex, `use`
-endianness flipping, the first-byte fingerprint / binary-vs-text split (with an
-invariant check that the index never changes results), and end-to-end detection
-of PNG/GIF/JPEG/PDF/gzip/ELF/BMP/ZIP/class plus text. A regression test also
-parses every file in the vendored database and asserts >99% of lines parse.
+length prefixes, relative and negative-from-EOF offsets, ctime/UTC/local/Windows
+dates, regex, `use` endianness flipping, the first-byte fingerprint /
+binary-vs-text split (with an invariant check that the index never changes
+results), text/encoding classification (ASCII/UTF-8/UTF-16/ISO-8859 and line
+terminators), the CLI driver (`--mime`/`--extension`/`-b`/`--version`), and
+end-to-end detection of PNG/GIF/JPEG/PDF/gzip/ELF/BMP/ZIP/class plus text. A
+regression test also parses every file in the vendored database (>99% of lines).
 
 ## Re-vendoring
 

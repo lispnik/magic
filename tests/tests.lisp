@@ -230,11 +230,22 @@
 ;;; Dates
 
 (test format-magic-date
-  (is (string= "1970-01-01 00:00:00" (magic::format-magic-date 0 nil)))
-  (is (string= "2009-02-13 23:31:30" (magic::format-magic-date 1234567890 nil))))
+  ;; ctime/asctime style, UTC for the non-local types
+  (is (string= "Thu Jan  1 00:00:00 1970"
+               (magic::format-magic-date 0 (magic::lookup-type "bedate"))))
+  (is (string= "Fri Feb 13 23:31:30 2009"
+               (magic::format-magic-date 1234567890 (magic::lookup-type "ledate"))))
+  ;; Windows FILETIME: 100 ns ticks since 1601, UTC
+  (is (string= "Fri Feb 13 23:31:30 2009"
+               (magic::format-magic-date (* (+ 1234567890 11644473600) 10000000)
+                                         (magic::lookup-type "leqwdate"))))
+  ;; local variant: value is TZ-dependent, so just check the shape
+  (is-true (cl-ppcre:scan
+            "^[A-Z][a-z][a-z] [A-Z][a-z][a-z] [ 0-9][0-9] [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}$"
+            (magic::format-magic-date 1234567890 (magic::lookup-type "leldate")))))
 
 (test date-type-end-to-end
-  (is (string= "stamp 2009-02-13 23:31:30"
+  (is (string= "stamp Fri Feb 13 23:31:30 2009"
                (match-desc (format nil "0	ledate	x	stamp %s")
                            (le32 1234567890)))))
 
@@ -343,5 +354,94 @@
     (is (> total 20000) "expected a large database, saw ~A test lines" total)
     (is (< err 30) "too many parse errors: ~A of ~A lines" err total)
     (is (> (/ ok total) 0.99) "parse coverage ~,1F%%" (* 100.0 (/ ok total)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Text classification and encoding
+
+(def-suite text :description "Text / encoding classification." :in all-tests)
+(in-suite text)
+
+(defun classify-desc (buffer) (nth-value 0 (magic::classify-text buffer)))
+
+(test classify-ascii-line-terminators
+  (is (string= "ASCII text" (classify-desc (bv "plain" 10))))          ; LF: no suffix
+  (is (string= "ASCII text, with CRLF line terminators" (classify-desc (bv "hi" 13 10))))
+  (is (string= "ASCII text, with CR line terminators" (classify-desc (bv "hi" 13))))
+  (is (string= "ASCII text, with no line terminators" (classify-desc (bv "hi")))))
+
+(test classify-utf8
+  (is (string= "UTF-8 Unicode text, with no line terminators"
+               (classify-desc (bv "caf" #xc3 #xa9))))                  ; café
+  (multiple-value-bind (d m cs) (magic::classify-text (bv "caf" #xc3 #xa9))
+    (declare (ignore d))
+    (is (string= "text/plain" m))
+    (is (string= "utf-8" cs))))
+
+(test classify-utf16-bom
+  (is (search "Little-endian UTF-16" (classify-desc (bv #xff #xfe #x68 #x00))))
+  (is (search "Big-endian UTF-16" (classify-desc (bv #xfe #xff #x00 #x68)))))
+
+(test classify-iso-8859
+  (is (string= "ISO-8859 text, with no line terminators"
+               (classify-desc (bv "caf" #xe9)))))                      ; é in latin-1
+
+(test classify-binary-is-nil
+  (is (null (magic::classify-text (bv "text" 0 1 2))))                 ; NUL/control bytes
+  (is (null (magic::classify-text (bv 0)))))
+
+(test text-encoding-appended-to-text-match
+  (let ((db (magic::make-database)))
+    (magic::database-add-source db (format nil "0	string	%FOO	Foo document text"))
+    ;; a text-type match over textual data gets the encoding appended
+    (let ((r (magic::buffer-match (bv "%FOO plain ascii" 10) :database db)))
+      (is (string= "Foo document text, ASCII text" (magic:result-description r))))
+    ;; the same rule over data containing binary bytes does not
+    (let ((r (magic::buffer-match (bv "%FOO" 0 1 2) :database db)))
+      (is (string= "Foo document text" (magic:result-description r))))))
+
+;;; ---------------------------------------------------------------------------
+;;; Command-line driver
+
+(def-suite cli :description "The file(1)-like CLI driver." :in all-tests)
+(in-suite cli)
+
+(defun cli-output (args)
+  "Return (values stdout-string exit-code) from running RUN-CLI on ARGS."
+  (let* ((code nil)
+         (out (with-output-to-string (s)
+                (let ((*standard-output* s)) (setf code (magic::run-cli args))))))
+    (values out code)))
+
+(test cli-version
+  (multiple-value-bind (out code) (cli-output '("--version"))
+    (is (zerop code))
+    (is (search "magic" out))))
+
+(test cli-identify-modes
+  (uiop:with-temporary-file (:pathname p :type "png")
+    (with-open-file (o p :direction :output :element-type '(unsigned-byte 8)
+                        :if-exists :supersede)
+      (write-sequence (sample-png) o))
+    (let ((path (namestring p)))
+      ;; default: "path: description"
+      (is (search "PNG image data" (cli-output (list path))))
+      (is (search path (cli-output (list path))))
+      ;; brief: description only, no path
+      (let ((out (cli-output (list "-b" path))))
+        (is (search "PNG image data" out))
+        (is (not (search path out))))
+      ;; mime and extension modes
+      (is (search "image/png" (cli-output (list "--mime" path))))
+      (is (string= "png" (string-trim '(#\Newline) (cli-output (list "-b" "--extension" path))))))))
+
+(test cli-missing-file
+  (multiple-value-bind (out code) (cli-output '("/no/such/file/here"))
+    (is (= 1 code))
+    (is (search "cannot open" out))))
+
+(test cli-unknown-option
+  (multiple-value-bind (out code) (cli-output '("--nope"))
+    (declare (ignore out))
+    (is (= 2 code))))
 
 (defun run-all () (run! 'all-tests))
