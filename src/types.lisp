@@ -61,7 +61,9 @@ ENDIAN is :little :big :middle or :native.  SIGNED is the default signedness."
     ("lestring16"   :string nil :little nil)
     ("search"       :search nil nil nil)
     ("regex"        :regex nil nil nil)
-    ("guid"         :guid 16 nil nil)
+    ("guid"         :guid 16 :little nil)
+    ("leguid"       :guid 16 :little nil)
+    ("beguid"       :guid 16 :big nil)
     ("der"          :der nil nil nil)
     ;; control / structural types
     ("indirect"     :indirect nil nil nil)

@@ -271,6 +271,60 @@
                                  buf))))))
 
 ;;; ---------------------------------------------------------------------------
+;;; String flags (c/C/W/w/f/T)
+
+(test string-flag-c-ignore-lowercase
+  ;; c folds case for LOWERCASE magic chars only (asymmetric)
+  (is-true  (match-desc (format nil "0	string/c	abc	hit") (bv "ABC")))
+  (is-true  (match-desc (format nil "0	string/c	abc	hit") (bv "abc")))
+  (is-false (match-desc (format nil "0	string/c	ABC	hit") (bv "abc"))))
+
+(test string-flag-C-ignore-uppercase
+  ;; C folds case for UPPERCASE magic chars only (asymmetric)
+  (is-true  (match-desc (format nil "0	string/C	ABC	hit") (bv "abc")))
+  (is-true  (match-desc (format nil "0	string/C	ABC	hit") (bv "ABC")))
+  (is-false (match-desc (format nil "0	string/C	abc	hit") (bv "ABC"))))
+
+(test string-flag-W-compact-whitespace
+  (is-true  (match-desc (format nil "0	string/W	a\\ b	hit") (bv "a   b")))
+  (is-false (match-desc (format nil "0	string/W	a\\ b	hit") (bv "ab"))))
+
+(test string-flag-w-optional-whitespace
+  (is-true  (match-desc (format nil "0	string/w	a\\ b	hit") (bv "ab")))
+  (is-true  (match-desc (format nil "0	string/w	a\\ b	hit") (bv "a  b"))))
+
+(test string-flag-f-full-word
+  (is-false (match-desc (format nil "0	string/f	foo	x") (bv "foobar")))
+  (is-true  (match-desc (format nil "0	string/f	foo	x") (bv "foo bar"))))
+
+(test string-flag-T-trim
+  (is (string= "[hi]" (match-desc (format nil "0	string/T	>\\0	[%s]") (bv "  hi  ")))))
+
+;;; ---------------------------------------------------------------------------
+;;; GUIDs
+
+(test guid-formatter
+  (let ((asf (bv #x30 #x26 #xb2 #x75 #x8e #x66 #xcf #x11
+                 #xa6 #xd9 #x00 #xaa #x00 #x62 #xce #x6c)))
+    ;; guid/leguid: first three fields little-endian
+    (is (string= "75B22630-668E-11CF-A6D9-00AA0062CE6C"
+                 (magic::read-guid-string asf 0 :little)))
+    ;; beguid: first three fields big-endian
+    (is (string= "3026B275-8E66-CF11-A6D9-00AA0062CE6C"
+                 (magic::read-guid-string asf 0 :big)))))
+
+(test guid-match-end-to-end
+  (let ((asf (bv #x30 #x26 #xb2 #x75 #x8e #x66 #xcf #x11
+                 #xa6 #xd9 #x00 #xaa #x00 #x62 #xce #x6c)))
+    (is (string= "ASF header"
+                 (match-desc (format nil "0	guid	75B22630-668E-11CF-A6D9-00AA0062CE6C	ASF header")
+                             asf)))
+    (is (string= "id 75B22630-668E-11CF-A6D9-00AA0062CE6C"
+                 (match-desc (format nil "0	guid	x	id %s") asf)))
+    (is (null (match-desc (format nil "0	guid	00000000-0000-0000-0000-000000000000	no")
+                          asf)))))
+
+;;; ---------------------------------------------------------------------------
 ;;; First-byte fingerprint index
 
 (def-suite indexing :description "Fingerprint index and binary/text split." :in all-tests)

@@ -130,8 +130,11 @@ continuation semantics, and the `\b` no-space message join.
 - Numeric/date/float types in native/BE/LE/middle endianness, signed and
   unsigned, with `& | ^ + - * / %` masks and `~` inversion
 - Operators `= != < > & ^ ~ x`
-- `string` (incl. `c`/`C` case-insensitivity), `pstring` (with the
-  `B/H/h/L/l/J` length-prefix modifiers), `search`, `regex` (via `cl-ppcre`)
+- `string` with the full flag set — `c`/`C` (asymmetric case folding),
+  `W`/`w` (whitespace compaction), `f` (full word), `T` (trim printed value) —
+  plus `pstring` (with the `B/H/h/L/l/J` length-prefix modifiers), `search`,
+  and `regex` (via `cl-ppcre`)
+- `guid`/`leguid`/`beguid` value tests and canonical GUID formatting
 - `name`/`use` subroutines (including `^name` endianness flipping) and
   `indirect` re-scans
 - `default`/`clear` continuation logic
@@ -159,9 +162,9 @@ regression test asserting the index never changes the outcome).
 
 Not a byte-for-byte clone of a specific `file` release. In particular:
 
-- `der` (DER certificate) and `guid` value tests are parsed but not evaluated
-- Some string flags (`W`, `w`, `T`, `t`, `b`, full-word `f`) are accepted but
-  only partially honoured; matching is otherwise exact/case-insensitive
+- `der` (DER certificate) tests are parsed but not evaluated
+- The `t`/`b` (text-only / binary-only) string flags are accepted but not acted
+  on; all other string flags (`c C W w f T`) are honoured
 - Text detection covers ASCII/UTF-8/UTF-16(BOM)/ISO-8859 with line-terminator
   reporting, but not `file`'s full charset sniffing (code pages, UTF-16
   without a BOM, EBCDIC, etc.)
@@ -181,7 +184,7 @@ $ sbcl --eval '(asdf:load-system "magic/tests")' \
        --eval '(fiveam:run! (quote magic/tests:all-tests))' --quit
 ```
 
-The suite (`tests/`, 160+ checks) covers the low-level parser units
+The suite (`tests/`, 180+ checks) covers the low-level parser units
 (integer/escape/offset parsing, type lookup, masks), printf formatting, numeric
 comparison, and hand-written mini-databases exercising the engine: `pstring`
 length prefixes, relative and negative-from-EOF offsets, ctime/UTC/local/Windows

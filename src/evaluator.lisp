@@ -136,48 +136,86 @@ or NIL if it cannot be computed."
 ;;; ---------------------------------------------------------------------------
 ;;; String / search comparison
 
-(defun byte-ci-eql (a b) (char-equal (code-char a) (code-char b)))
+(declaim (inline ws-byte-p lower-byte-p upper-byte-p to-lower-byte to-upper-byte))
+(defun ws-byte-p (b) (or (= b 32) (<= 9 b 13)))     ; space, tab, nl, vt, ff, cr
+(defun lower-byte-p (b) (<= (char-code #\a) b (char-code #\z)))
+(defun upper-byte-p (b) (<= (char-code #\A) b (char-code #\Z)))
+(defun to-lower-byte (b) (if (upper-byte-p b) (+ b 32) b))
+(defun to-upper-byte (b) (if (lower-byte-p b) (- b 32) b))
+
+(defun magic-strncmp (buffer offset magic flags)
+  "A port of file(1)'s file_strncmp: compare the MAGIC octet-vector against
+BUFFER at OFFSET, honouring the string flags c/C (asymmetric case folding),
+W (compact whitespace), w (optional whitespace) and f (full word).  Returns an
+integer like strncmp -- 0 means the magic matched."
+  (let* ((len (length magic))
+         (n (buffer-length buffer))
+         (ci-low (and (find #\c flags) t))
+         (ci-up (and (find #\C flags) t))
+         (compact (and (find #\W flags) t))
+         (optional (and (find #\w flags) t))
+         (fullword (and (find #\f flags) t))
+         (eb (min n (+ offset (if (or compact optional) n len))))
+         (ai 0) (bi offset) (v 0))
+    (flet ((bat (i) (if (< i n) (aref buffer i) 0)))
+      (block cmp
+        (dotimes (k len)
+          (when (>= bi eb) (setf v 1) (return-from cmp))
+          (let ((a (aref magic ai)))
+            (cond
+              ((and ci-low (lower-byte-p a))
+               (setf v (- (to-lower-byte (bat bi)) a)) (incf bi) (incf ai)
+               (unless (zerop v) (return-from cmp)))
+              ((and ci-up (upper-byte-p a))
+               (setf v (- (to-upper-byte (bat bi)) a)) (incf bi) (incf ai)
+               (unless (zerop v) (return-from cmp)))
+              ((and compact (ws-byte-p a))
+               (incf ai)
+               (if (and (< bi eb) (ws-byte-p (bat bi)))
+                   (progn (incf bi)
+                          (when (and (< ai len) (not (ws-byte-p (aref magic ai))))
+                            (loop while (and (< bi eb) (ws-byte-p (bat bi))) do (incf bi))))
+                   (progn (setf v 1) (return-from cmp))))
+              ((and optional (ws-byte-p a))
+               (incf ai)
+               (loop while (and (< bi eb) (ws-byte-p (bat bi))) do (incf bi)))
+              (t
+               (setf v (- (bat bi) a)) (incf bi) (incf ai)
+               (unless (zerop v) (return-from cmp)))))))
+      (when (and fullword (zerop v) (< bi n) (not (ws-byte-p (bat bi))))
+        (setf v 1)))
+    v))
 
 (defun string-bytes-match-p (buffer offset test flags)
   "Does the TEST octet-vector match BUFFER at OFFSET for a '=' string test?"
-  (let ((tlen (length test))
-        (ci (or (find #\c flags) (find #\C flags))))
-    (and (in-bounds-p buffer offset tlen)
-         (loop for i below tlen
-               for a = (aref buffer (+ offset i))
-               for b = (aref test i)
-               always (if ci (byte-ci-eql a b) (= a b))))))
+  (zerop (magic-strncmp buffer offset test flags)))
 
 (defun string-relational (buffer offset test op flags)
-  "Handle a string test with operator OP (= < > !).  Returns end-length on
-success or NIL on failure."
-  (let* ((tlen (length test))
-         (ci (or (find #\c flags) (find #\C flags))))
-    (flet ((cmp ()
-             ;; lexicographic compare of TLEN bytes
-             (loop for i below tlen
-                   do (unless (in-bounds-p buffer (+ offset i) 1)
-                        (return -1))
-                      (let ((a (aref buffer (+ offset i)))
-                            (b (aref test i)))
-                        (when ci (setf a (char-code (char-downcase (code-char a)))
-                                       b (char-code (char-downcase (code-char b)))))
-                        (cond ((< a b) (return -1)) ((> a b) (return 1))))
-                   finally (return 0))))
-      (case op
-        (#\= (when (string-bytes-match-p buffer offset test flags) tlen))
-        (#\! (unless (string-bytes-match-p buffer offset test flags) tlen))
-        (#\> (when (plusp (cmp)) tlen))
-        (#\< (when (minusp (cmp)) tlen))
-        (t (when (string-bytes-match-p buffer offset test flags) tlen))))))
+  "Handle a string test with operator OP (= < > !).  Returns the match length
+on success or NIL on failure."
+  (let ((v (magic-strncmp buffer offset test flags))
+        (tlen (length test)))
+    (case op
+      (#\= (when (zerop v) tlen))
+      (#\! (when (/= v 0) tlen))
+      (#\> (when (> v 0) tlen))
+      (#\< (when (< v 0) tlen))
+      (t (when (zerop v) tlen)))))
 
-(defun extract-string (buffer offset &key (limit 96))
-  "Return a display string from BUFFER at OFFSET up to a NUL, newline, or LIMIT."
-  (with-output-to-string (s)
-    (loop for i from offset below (min (buffer-length buffer) (+ offset limit))
-          for b = (aref buffer i)
-          until (or (= b 0) (= b 10) (= b 13))
-          do (write-char (code-char b) s))))
+(defun trim-if (string flags)
+  "Trim leading/trailing whitespace from STRING when the T flag is present."
+  (if (find #\T flags) (string-trim '(#\Space #\Tab #\Newline #\Return) string) string))
+
+(defun extract-string (buffer offset &key (limit 96) (flags ""))
+  "Return a display string from BUFFER at OFFSET up to a NUL, newline, or LIMIT,
+trimmed when the T flag is set."
+  (trim-if
+   (with-output-to-string (s)
+     (loop for i from offset below (min (buffer-length buffer) (+ offset limit))
+           for b = (aref buffer i)
+           until (or (= b 0) (= b 10) (= b 13))
+           do (write-char (code-char b) s)))
+   flags))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Pascal strings
@@ -198,6 +236,36 @@ per its /[BHhLlJ] modifiers.  B (1 byte) is the default."
   (with-output-to-string (s)
     (loop for i from offset below (min (buffer-length buffer) (+ offset len))
           do (write-char (code-char (aref buffer i)) s))))
+
+;;; ---------------------------------------------------------------------------
+;;; GUIDs
+
+(defun read-guid-string (buffer offset endian)
+  "Read a 16-byte GUID at OFFSET and render it canonically (uppercase
+XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX), or NIL if out of range.  ENDIAN selects
+the byte order of the first three fields (little for `guid'/`leguid', big for
+`beguid')."
+  (when (in-bounds-p buffer offset 16)
+    (flet ((b (i) (aref buffer (+ offset i))))
+      (format nil "~8,'0X-~4,'0X-~4,'0X-~2,'0X~2,'0X-~2,'0X~2,'0X~2,'0X~2,'0X~2,'0X~2,'0X"
+              (read-uint buffer offset 4 endian)
+              (read-uint buffer (+ offset 4) 2 endian)
+              (read-uint buffer (+ offset 6) 2 endian)
+              (b 8) (b 9) (b 10) (b 11) (b 12) (b 13) (b 14) (b 15)))))
+
+(defun try-guid (entry off state)
+  "Match a GUID: format the 16 file bytes canonically and compare (as an
+upper-cased string) to the magic's GUID value."
+  (let ((g (read-guid-string (ms-buffer state) off
+                             (effective-endian (mtype-endian (ent-type entry)) (ms-flip state)))))
+    (when g
+      (let ((op (ent-operator entry)) (want (ent-test-value entry)))
+        (when (case op
+                (#\x t)
+                (#\= (and want (string= g want)))
+                (#\! (or (null want) (not (string= g want))))
+                (t nil))
+          (make-hit :value g :end (+ off 16)))))))
 
 (defun try-pstring (entry off state)
   "Match a Pascal string: read the length prefix, then compare/extract the
@@ -255,7 +323,9 @@ directly so that word spacing (the \\b no-space marker) works across the join."
   (let* ((cat (mtype-category (ent-type entry)))
          (level (ent-level entry))
          (off (resolve-offset (ent-offset entry) level state)))
-    (when (null off) (return-from try-entry nil))
+    ;; a NIL or negative offset (e.g. a from-EOF offset larger than the file)
+    ;; can never match
+    (when (or (null off) (minusp off)) (return-from try-entry nil))
     (case cat
       ((:numeric :date :offset)
        (let* ((size (mtype-size (ent-type entry)))
@@ -277,22 +347,24 @@ directly so that word spacing (the \\b no-space marker) works across the join."
                      (#\> (> v tv)) (#\< (< v tv)) (t nil))
                (make-hit :value v :end (field-end entry off nil)))))))
       (:string
-       (let ((test (ent-test-value entry)))
+       (let ((test (ent-test-value entry))
+             (flags (ent-str-flags entry)))
          (when (eq (ent-operator entry) #\x)
            (return-from try-entry
              (when (in-bounds-p (ms-buffer state) off 1)
-               (make-hit :value (extract-string (ms-buffer state) off)
+               (make-hit :value (extract-string (ms-buffer state) off :flags flags)
                          :end (field-end entry off 0)))))
          (let ((mlen (string-relational (ms-buffer state) off test
-                                        (ent-operator entry) (ent-str-flags entry))))
+                                        (ent-operator entry) flags)))
            (when mlen
              ;; For =/! the printed value is exactly the matched region (like
              ;; file(1)); for </> it is the whole string read from the file.
              (make-hit :value (if (member (ent-operator entry) '(#\= #\!))
-                                  (extract-bytes-string (ms-buffer state) off mlen)
-                                  (extract-string (ms-buffer state) off))
+                                  (trim-if (extract-bytes-string (ms-buffer state) off mlen) flags)
+                                  (extract-string (ms-buffer state) off :flags flags))
                        :end (field-end entry off mlen))))))
       (:pstring (try-pstring entry off state))
+      (:guid (try-guid entry off state))
       (:search
        (let* ((test (ent-test-value entry))
               (range (or (ent-str-range entry) 1))
@@ -505,7 +577,9 @@ at a constant absolute offset can be determined.  The condition must be
                (char= (ent-operator entry) #\=))
       (case (mtype-category (ent-type entry))
         (:string
-         (unless (or (find #\c (ent-str-flags entry)) (find #\C (ent-str-flags entry)))
+         ;; a determinable first byte requires no case folding or whitespace
+         ;; compaction to alter it
+         (unless (find-if (lambda (c) (member c '(#\c #\C #\W #\w))) (ent-str-flags entry))
            (let ((tv (ent-test-value entry)))
              (when (and (typep tv '(array octet (*))) (plusp (length tv)))
                (cons (moff-base off) (aref tv 0))))))

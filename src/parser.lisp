@@ -248,6 +248,8 @@ Returns (values token end-index); TOKEN is NIL when only whitespace remains."
            ((eq cat :regex)
             (multiple-value-bind (text) (decode-message-escapes (subseq token start))
               (setf (ent-test-value entry) text)))
+           ((eq cat :guid)
+            (setf (ent-test-value entry) (string-upcase (subseq token start))))
            (t                          ; string-like: decode to bytes
             (setf (ent-test-value entry)
                   (decode-string-escapes (subseq token start))))))))))
