@@ -5,6 +5,8 @@
 (defstruct (database (:constructor %make-database))
   (entries (make-array 0 :adjustable t :fill-pointer 0))  ; top-level, sorted
   (names (make-hash-table :test 'equal))                  ; name -> NAME entry
+  (binary (make-array 0 :adjustable t :fill-pointer 0))   ; binary tests, sorted
+  (text (make-array 0 :adjustable t :fill-pointer 0))     ; text tests, sorted
   (sorted nil))
 
 (defun make-database () (%make-database))
@@ -28,12 +30,22 @@
   db)
 
 (defun ensure-sorted (db)
-  "Sort the top-level entries by descending strength (matching file's order)."
+  "Sort the top-level entries by descending strength (matching file's order),
+precompute each entry's first-byte fingerprint, and partition them into the
+binary and text passes."
   (unless (database-sorted db)
-    (let ((vec (database-entries db)))
+    (let ((vec (database-entries db))
+          (bin (make-array 0 :adjustable t :fill-pointer 0))
+          (txt (make-array 0 :adjustable t :fill-pointer 0)))
       (sort vec #'> :key #'entry-strength)
-      (setf (database-sorted db) t))
-    db)
+      (loop for e across vec
+            do (setf (ent-fp e) (entry-fingerprint e))
+               (if (entry-text-p e)
+                   (vector-push-extend e txt)
+                   (vector-push-extend e bin)))
+      (setf (database-binary db) bin
+            (database-text db) txt
+            (database-sorted db) t)))
   db)
 
 ;;; ---------------------------------------------------------------------------
@@ -92,14 +104,33 @@ description, else NIL."
           (setf (acc-strength acc) (entry-strength entry))
           acc)))))
 
+(defvar *fingerprint-index* t
+  "When true, skip entries whose first-byte fingerprint cannot be satisfied
+before evaluating them.  Purely an optimization; results are identical either
+way.  Bound to NIL in tests to check that invariant.")
+
+(defun scan-entries (entries state)
+  "Evaluate ENTRIES (a strength-sorted vector) against STATE, returning the
+first ACC with a non-empty description, or NIL.  Entries whose first-byte
+fingerprint cannot be satisfied are skipped without the full evaluation."
+  (let ((buffer (ms-buffer state))
+        (bias (ms-bias state)))
+    (loop for entry across entries
+          when (or (not *fingerprint-index*)
+                   (fingerprint-ok-p (ent-fp entry) buffer bias))
+            do (let ((acc (eval-top entry state)))
+                 (when acc (return acc)))
+          finally (return nil))))
+
 (defun match-buffer-1 (db state)
-  "Try DB's entries in strength order against STATE; return the first ACC that
-yields a non-empty description, or NIL."
+  "Match STATE's buffer against DB: the binary tests first (in strength order),
+then -- only when the data looks like text -- the text (regex/search) tests.
+This mirrors file(1) and avoids scanning hundreds of text patterns over binary
+data.  Returns an ACC or NIL."
   (ensure-sorted db)
-  (loop for entry across (database-entries db)
-        for acc = (eval-top entry state)
-        when acc do (return acc)
-        finally (return nil)))
+  (or (scan-entries (database-binary db) state)
+      (when (buffer-textual-p (ms-buffer state))
+        (scan-entries (database-text db) state))))
 
 (defun match-buffer (db buffer)
   "Match BUFFER against DB.  Returns an ACC or NIL."

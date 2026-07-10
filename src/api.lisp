@@ -28,12 +28,6 @@
 ;;; ---------------------------------------------------------------------------
 ;;; Text classification (a small stand-in for file(1)'s separate ascmagic pass)
 
-(defun text-byte-p (b)
-  "True for bytes file(1) considers part of printable text."
-  (or (<= 32 b 126)                     ; printable ASCII
-      (member b '(9 10 12 13 27))       ; tab, nl, ff, cr, esc
-      (<= 160 b 255)))                  ; high ISO-8859 range
-
 (defun classify-text (buffer)
   "If BUFFER looks like text, return (values description mime-type), else NIL."
   (let ((n (buffer-length buffer)))
@@ -41,7 +35,7 @@
       (let ((high nil))
         (dotimes (i n)
           (let ((b (aref buffer i)))
-            (unless (text-byte-p b) (return-from classify-text nil))
+            (unless (text-octet-p b) (return-from classify-text nil))
             (when (>= b 128) (setf high t))))
         (if high
             (values "ISO-8859 text" "text/plain")

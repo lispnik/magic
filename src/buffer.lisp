@@ -42,6 +42,14 @@ that many leading bytes are read (file(1) itself only reads a bounded prefix)."
     (sequence (map 'octet-vector (lambda (x) (logand #xff (if (characterp x) (char-code x) x)))
                    sequence))))
 
+(declaim (inline text-octet-p))
+(defun text-octet-p (b)
+  "True for a byte file(1) treats as part of printable text (ASCII printable,
+the usual whitespace/escape controls, or the high ISO-8859 range)."
+  (or (<= 32 b 126)
+      (member b '(9 10 12 13 27))
+      (<= 160 b 255)))
+
 (declaim (inline in-bounds-p))
 (defun in-bounds-p (buffer offset size)
   (and (>= offset 0)

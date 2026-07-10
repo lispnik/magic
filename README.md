@@ -126,8 +126,8 @@ continuation semantics, and the `\b` no-space message join.
 - Numeric/date/float types in native/BE/LE/middle endianness, signed and
   unsigned, with `& | ^ + - * / %` masks and `~` inversion
 - Operators `= != < > & ^ ~ x`
-- `string` (incl. `c`/`C` case-insensitivity), `pstring`, `search`, `regex`
-  (via `cl-ppcre`)
+- `string` (incl. `c`/`C` case-insensitivity), `pstring` (with the
+  `B/H/h/L/l/J` length-prefix modifiers), `search`, `regex` (via `cl-ppcre`)
 - `name`/`use` subroutines (including `^name` endianness flipping) and
   `indirect` re-scans
 - `default`/`clear` continuation logic
@@ -135,6 +135,17 @@ continuation semantics, and the `\b` no-space message join.
 - printf-style message formatting and the `\b` separator rules
 - Strength scoring that mirrors `file`'s rule ordering
 - A small text-vs-binary fallback (ASCII / ISO-8859 text)
+
+### Performance
+
+Matching mirrors `file`'s two-phase strategy: **binary** tests run first in
+strength order, and the ~340 **text** tests (`search`/`regex` with printable
+patterns) are tried only if the data looks textual. Each top-level rule also
+carries a precomputed **first-byte fingerprint**, so rules whose fixed offset
+can't possibly match are skipped before any evaluation. Together these take an
+unknown-binary (no-match) identification from ~26 ms to ~0.6 ms, and a typical
+match (PNG) to ~0.6 ms — while producing byte-identical results (there is a
+regression test asserting the index never changes the outcome).
 
 ### Known limitations
 
@@ -161,11 +172,14 @@ $ sbcl --eval '(asdf:load-system "magic/tests")' \
        --eval '(fiveam:run! (quote magic/tests:all-tests))' --quit
 ```
 
-The suite (`tests/`) covers the low-level parser units (integer/escape/offset
-parsing, type lookup, masks), printf formatting, numeric comparison, a couple
-of hand-written mini-databases exercising the engine (including indirect
-offsets), and end-to-end detection of PNG/GIF/JPEG/PDF/gzip/ELF/BMP/ZIP/class
-plus text — all against the vendored database.
+The suite (`tests/`, 140+ checks) covers the low-level parser units
+(integer/escape/offset parsing, type lookup, masks), printf formatting, numeric
+comparison, and hand-written mini-databases exercising the engine: `pstring`
+length prefixes, relative and negative-from-EOF offsets, dates, regex, `use`
+endianness flipping, the first-byte fingerprint / binary-vs-text split (with an
+invariant check that the index never changes results), and end-to-end detection
+of PNG/GIF/JPEG/PDF/gzip/ELF/BMP/ZIP/class plus text. A regression test also
+parses every file in the vendored database and asserts >99% of lines parse.
 
 ## Re-vendoring
 
@@ -183,6 +197,7 @@ runtime; the rest is kept for provenance and regeneration.
 
 ```
 magic.asd              system + test-system definitions
+LICENSE                BSD-2-Clause
 src/                   library sources (see table above)
 tests/                 fiveam suite + in-memory fixtures
 bin/magic              built standalone CLI (via scripts/build-image.sh; gitignored)

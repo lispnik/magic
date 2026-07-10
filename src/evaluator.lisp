@@ -180,6 +180,44 @@ success or NIL on failure."
           do (write-char (code-char b) s))))
 
 ;;; ---------------------------------------------------------------------------
+;;; Pascal strings
+
+(defun pstring-prefix (flags)
+  "Return (values PREFIX-SIZE ENDIAN INCLUDES-SELF) for a pstring's length field,
+per its /[BHhLlJ] modifiers.  B (1 byte) is the default."
+  (multiple-value-bind (size endian)
+      (cond ((find #\H flags) (values 2 :big))
+            ((find #\h flags) (values 2 :little))
+            ((find #\L flags) (values 4 :big))
+            ((find #\l flags) (values 4 :little))
+            (t (values 1 :big)))
+    (values size endian (and (find #\J flags) t))))
+
+(defun extract-bytes-string (buffer offset len)
+  "Return LEN bytes from BUFFER at OFFSET as a string (not NUL-terminated)."
+  (with-output-to-string (s)
+    (loop for i from offset below (min (buffer-length buffer) (+ offset len))
+          do (write-char (code-char (aref buffer i)) s))))
+
+(defun try-pstring (entry off state)
+  "Match a Pascal string: read the length prefix, then compare/extract the
+content that follows it."
+  (let ((buf (ms-buffer state))
+        (flags (ent-str-flags entry)))
+    (multiple-value-bind (psize pendian incl) (pstring-prefix flags)
+      (let ((len (read-uint buf off psize pendian)))
+        (when (null len) (return-from try-pstring nil))
+        (let* ((content-off (+ off psize))
+               (content-len (max 0 (if incl (- len psize) len)))
+               (end (+ content-off content-len))
+               (test (ent-test-value entry)))
+          (if (eq (ent-operator entry) #\x)
+              (make-hit :value (extract-bytes-string buf content-off content-len) :end end)
+              (when (string-relational buf content-off test (ent-operator entry) flags)
+                (make-hit :value (extract-bytes-string buf content-off content-len)
+                          :end end))))))))
+
+;;; ---------------------------------------------------------------------------
 ;;; Regex
 
 (defun entry-regex-scanner (entry)
@@ -238,7 +276,7 @@ directly so that word spacing (the \\b no-space marker) works across the join."
              (when (case op (#\x t) (#\= (= v tv)) (#\! (/= v tv))
                      (#\> (> v tv)) (#\< (< v tv)) (t nil))
                (make-hit :value v :end (field-end entry off nil)))))))
-      ((:string :pstring)
+      (:string
        (let ((test (ent-test-value entry)))
          (when (eq (ent-operator entry) #\x)
            (return-from try-entry
@@ -248,8 +286,13 @@ directly so that word spacing (the \\b no-space marker) works across the join."
          (let ((mlen (string-relational (ms-buffer state) off test
                                         (ent-operator entry) (ent-str-flags entry))))
            (when mlen
-             (make-hit :value (extract-string (ms-buffer state) off)
+             ;; For =/! the printed value is exactly the matched region (like
+             ;; file(1)); for </> it is the whole string read from the file.
+             (make-hit :value (if (member (ent-operator entry) '(#\= #\!))
+                                  (extract-bytes-string (ms-buffer state) off mlen)
+                                  (extract-string (ms-buffer state) off))
                        :end (field-end entry off mlen))))))
+      (:pstring (try-pstring entry off state))
       (:search
        (let* ((test (ent-test-value entry))
               (range (or (ent-str-range entry) 1))
@@ -426,3 +469,66 @@ default/clear match tracking.  Returns T if any entry matched."
     (when (<= val 0) (setf val 1))
     (unless (ent-message entry) (incf val))
     val))
+
+;;; ---------------------------------------------------------------------------
+;;; First-byte fingerprint (a necessary-condition index for fast rejection)
+
+(defun entry-fingerprint (entry)
+  "Return a cons (OFFSET . BYTE) such that BUFFER[OFFSET] must equal BYTE for
+ENTRY to have any chance of matching, or NIL when no single-byte precondition
+at a constant absolute offset can be determined.  The condition must be
+*necessary*, so it is only derived from `=' tests at fixed offsets."
+  (let ((off (ent-offset entry)))
+    (when (and (not (moff-indirect off)) (not (moff-relative off))
+               (not (moff-from-end off)) (not (moff-base-relative off))
+               (>= (moff-base off) 0)
+               (char= (ent-operator entry) #\=))
+      (case (mtype-category (ent-type entry))
+        (:string
+         (unless (or (find #\c (ent-str-flags entry)) (find #\C (ent-str-flags entry)))
+           (let ((tv (ent-test-value entry)))
+             (when (and (typep tv '(array octet (*))) (plusp (length tv)))
+               (cons (moff-base off) (aref tv 0))))))
+        (:numeric
+         (unless (ent-mask entry)
+           (let* ((size (mtype-size (ent-type entry)))
+                  (endian (effective-endian (mtype-endian (ent-type entry)) nil))
+                  (tv (mask-to-size (or (ent-test-value entry) 0) size)))
+             (unless (eq endian :middle)
+               (cons (moff-base off)
+                     (if (eq endian :little)
+                         (logand tv #xff)
+                         (logand (ash tv (- (* 8 (1- size)))) #xff)))))))
+        (t nil)))))
+
+(defun fingerprint-ok-p (fp buffer bias)
+  "True when ENTRY's fingerprint FP is satisfied by BUFFER (offset shifted by
+BIAS), or when FP is NIL (no precondition)."
+  (or (null fp)
+      (let ((o (+ (car fp) bias)))
+        (and (in-bounds-p buffer o 1)
+             (= (aref buffer o) (cdr fp))))))
+
+;;; ---------------------------------------------------------------------------
+;;; Binary vs. text classification
+;;;
+;;; Per MAGIC(5): regex and search are text tests unless their pattern contains
+;;; non-printable bytes; every other test is binary.  file(1) runs the binary
+;;; tests first and only tries the text tests when the data looks like text.
+
+(defun printable-pattern-p (pattern)
+  "True when PATTERN (a string or octet-vector) contains only text bytes."
+  (etypecase pattern
+    (null nil)
+    (string (every (lambda (c) (text-octet-p (char-code c))) pattern))
+    (vector (every #'text-octet-p pattern))))
+
+(defun entry-text-p (entry)
+  "True when ENTRY is a text test (a regex/search with a printable pattern)."
+  (and (member (mtype-category (ent-type entry)) '(:regex :search))
+       (printable-pattern-p (ent-test-value entry))))
+
+(defun buffer-textual-p (buffer &optional (limit 4096))
+  "True when the first LIMIT bytes of BUFFER are all printable text bytes."
+  (let ((n (min (buffer-length buffer) limit)))
+    (loop for i below n always (text-octet-p (aref buffer i)))))

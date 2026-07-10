@@ -2,7 +2,7 @@
 
 (asdf:defsystem "magic"
   :description "Read file(1)'s magic database and identify files, in pure Common Lisp."
-  :author "Generated with Claude Code"
+  :author "Matthew Kennedy"
   :license "BSD-2-Clause"
   :version "0.1.0"
   :depends-on ("cl-ppcre")

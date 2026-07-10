@@ -167,6 +167,7 @@ Returns (values token end-index); TOKEN is NIL when only whitespace remains."
   ;; annotations
   mime ext apple strength
   (compiled nil)                ; cached cl-ppcre scanner for regex entries
+  (fp :unset)                   ; first-byte fingerprint: (offset . byte) or NIL
   (children nil))               ; list of child entries (level+1)
 
 (defun parse-type-token (token entry)

@@ -165,4 +165,183 @@
   (is (null (magic::match-buffer (magic:default-database)
                                  (magic::bytes->buffer #())))))
 
+;;; ---------------------------------------------------------------------------
+;;; Pascal strings
+
+(def-suite engine :description "Evaluator features." :in all-tests)
+(in-suite engine)
+
+(defun match-desc (source buffer)
+  "Parse SOURCE into a fresh database and return the description for BUFFER."
+  (let ((db (magic::make-database)))
+    (magic::database-add-source db source)
+    (let ((acc (magic::match-buffer db buffer)))
+      (and acc (magic::acc-description acc)))))
+
+(test pstring-byte-length
+  ;; 1-byte length prefix (default B): length 2, content "hi"
+  (is (string= "got hi next 9"
+               (match-desc (format nil "0	pstring	hi	got %s~%>3	byte	x	next %d")
+                           (bv 2 "hi" 9)))))
+
+(test pstring-2byte-be-length
+  (is (string= "P ab"
+               (match-desc (format nil "0	pstring/H	ab	P %s") (bv 0 2 "ab")))))
+
+(test pstring-length-includes-self
+  ;; /J: the length field (4) counts its own 2 prefix bytes, leaving 2 content
+  (is (string= "P cd"
+               (match-desc (format nil "0	pstring/HJ	cd	P %s") (bv 0 4 "cd")))))
+
+(test pstring-prefix-modifiers
+  (multiple-value-bind (size endian incl) (magic::pstring-prefix "H")
+    (is (= 2 size)) (is (eq :big endian)) (is (not incl)))
+  (multiple-value-bind (size endian incl) (magic::pstring-prefix "lJ")
+    (is (= 4 size)) (is (eq :little endian)) (is-true incl))
+  (multiple-value-bind (size endian) (magic::pstring-prefix "")
+    (is (= 1 size)) (is (eq :big endian))))
+
+;;; ---------------------------------------------------------------------------
+;;; String value uses the matched region (the GIF \x01 bug)
+
+(test string-equal-prints-matched-region
+  ;; %s must print only the matched bytes, not everything up to the next NUL
+  (is (string= "ver 89a!"
+               (match-desc (format nil "0	string	9a	ver 8%s!") (bv "9a" 1 0)))))
+
+(test string-relational-and-any
+  (is (string= "nonempty: Hi"
+               (match-desc (format nil "0	string	>\\0	nonempty: %s") (bv "Hi" 0))))
+  (is (null (match-desc (format nil "0	string	>\\0	x") (bv 0 0)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Offsets: relative, negative-from-end
+
+(test relative-offset
+  (is (string= "ab then cd"
+               (match-desc (format nil "0	string	AB	ab~%>&0	string	CD	then cd")
+                           (bv "ABCD")))))
+
+(test negative-from-end-offset
+  (is (string= "ends with tail"
+               (match-desc (format nil "-4	string	TAIL	ends with tail") (bv "xyTAIL")))))
+
+;;; ---------------------------------------------------------------------------
+;;; Dates
+
+(test format-magic-date
+  (is (string= "1970-01-01 00:00:00" (magic::format-magic-date 0 nil)))
+  (is (string= "2009-02-13 23:31:30" (magic::format-magic-date 1234567890 nil))))
+
+(test date-type-end-to-end
+  (is (string= "stamp 2009-02-13 23:31:30"
+               (match-desc (format nil "0	ledate	x	stamp %s")
+                           (le32 1234567890)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Regex
+
+(test regex-match
+  (is (string= "upper ABC"
+               (match-desc (format nil "0	regex	=[A-Z]+	upper %s") (bv "ABCdef")))))
+
+;;; ---------------------------------------------------------------------------
+;;; use / name with endianness flip (^name)
+
+(test use-endian-flip
+  (let ((buf (bv "MM" #x12 #x34)))
+    ;; ^swap flips leshort -> beshort, so 0x1234 matches the big-endian bytes
+    (is (search "FLIP"
+                (match-desc (format nil "0	name	swap~%>2	leshort	0x1234	FLIP~%0	string	MM	root~%>0	use	^swap")
+                            buf)))
+    ;; without the flip, the little-endian read is 0x3412 and does not match
+    (is (not (search "FLIP"
+                     (match-desc (format nil "0	name	swap~%>2	leshort	0x1234	FLIP~%0	string	MM	root~%>0	use	swap")
+                                 buf))))))
+
+;;; ---------------------------------------------------------------------------
+;;; First-byte fingerprint index
+
+(def-suite indexing :description "Fingerprint index and binary/text split." :in all-tests)
+(in-suite indexing)
+
+(defun fp-of (line)
+  (magic::entry-fingerprint (magic::parse-magic-line line)))
+
+(test fingerprint-derivation
+  (is (equal '(0 . #x46) (fp-of "0	string	FOO	x")))          ; 'F'
+  (is (equal '(0 . #x12) (fp-of "0	beshort	0x1234	x")))       ; BE high byte
+  (is (equal '(0 . #x34) (fp-of "0	leshort	0x1234	x")))       ; LE low byte
+  (is (equal '(4 . #x25) (fp-of "4	string	%PDF	x")))
+  ;; no single-byte precondition can be derived from these:
+  (is (null (fp-of "0	string/c	foo	x")))                     ; case-insensitive
+  (is (null (fp-of "0	belong&0xff	0x12	x")))                 ; masked
+  (is (null (fp-of "0	string	>\\0	x")))                       ; relational
+  (is (null (fp-of "0	search/10	foo	x")))                    ; search scans a range
+  (is (null (fp-of ">(0.l)	string	X	x"))))                   ; indirect offset
+
+(test fingerprint-ok-p
+  (let ((buf (bv "FOO")))
+    (is-true  (magic::fingerprint-ok-p '(0 . #x46) buf 0))       ; 'F' present
+    (is-false (magic::fingerprint-ok-p '(0 . #x47) buf 0))       ; 'G' absent
+    (is-false (magic::fingerprint-ok-p '(9 . #x46) buf 0))       ; out of bounds
+    (is-true  (magic::fingerprint-ok-p nil buf 0))               ; no precondition
+    (is-true  (magic::fingerprint-ok-p '(0 . #x4f) buf 1))))     ; bias shifts 0 -> 'O'
+
+(test text-vs-binary-classification
+  (is-true  (magic::entry-text-p (magic::parse-magic-line "0	regex	=[a-z]+	x")))
+  (is-true  (magic::entry-text-p (magic::parse-magic-line "0	search/9	hello	x")))
+  (is-false (magic::entry-text-p (magic::parse-magic-line "0	search/9	\\x00\\x01	x")))
+  (is-false (magic::entry-text-p (magic::parse-magic-line "0	string	hello	x")))
+  (is-false (magic::entry-text-p (magic::parse-magic-line "0	belong	1	x"))))
+
+(test buffer-textual-p
+  (is-true  (magic::buffer-textual-p (bv "plain text")))
+  (is-false (magic::buffer-textual-p (bv "has" 0 "nul")))
+  (is-true  (magic::buffer-textual-p (bv 9 10 13 "tabs and newlines"))))
+
+(test database-partition-covers-all
+  (let ((db (magic:default-database)))
+    (magic::ensure-sorted db)
+    (is (= (magic:database-entry-count db)
+           (+ (length (magic::database-binary db)) (length (magic::database-text db)))))
+    (is (> (length (magic::database-text db)) 100))
+    (is (> (length (magic::database-binary db)) 3000))))
+
+(test index-does-not-change-results
+  ;; every sample must resolve identically with and without the index
+  (let ((db (magic:default-database)))
+    (dolist (buf (list (sample-png) (sample-gif) (sample-jpeg) (sample-pdf)
+                       (sample-gzip) (sample-elf) (sample-bmp) (sample-zip)
+                       (sample-class) (sample-ascii)
+                       (bv 1 2 3 4 5 6 7 8 9 10)))
+      (let ((with (let ((magic::*fingerprint-index* t)) (magic:buffer-type buf :database db)))
+            (without (let ((magic::*fingerprint-index* nil)) (magic:buffer-type buf :database db))))
+        (is (string= with without)
+            "index changed result: ~S vs ~S" with without)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Whole-database parse coverage (regression guard)
+
+(def-suite coverage :description "Parse the entire vendored database." :in all-tests)
+(in-suite coverage)
+
+(test parse-all-magdir
+  (let ((total 0) (ok 0) (err 0))
+    (dolist (f (uiop:directory-files (magic::vendored-magic-directory)))
+      (with-open-file (in f :if-does-not-exist nil :external-format :latin-1)
+        (when in
+          (loop for line = (read-line in nil) while line do
+            (let ((tr (string-left-trim '(#\Space #\Tab) line)))
+              (when (and (plusp (length tr))
+                         (char/= (char tr 0) #\#)
+                         (not (and (> (length tr) 1)
+                                   (char= (char tr 0) #\!) (char= (char tr 1) #\:))))
+                (incf total)
+                (handler-case (progn (magic::parse-magic-line line) (incf ok))
+                  (error () (incf err)))))))))
+    (is (> total 20000) "expected a large database, saw ~A test lines" total)
+    (is (< err 30) "too many parse errors: ~A of ~A lines" err total)
+    (is (> (/ ok total) 0.99) "parse coverage ~,1F%%" (* 100.0 (/ ok total)))))
+
 (defun run-all () (run! 'all-tests))
