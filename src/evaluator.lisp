@@ -618,9 +618,16 @@ BIAS), or when FP is NIL (no precondition)."
     (vector (every #'text-octet-p pattern))))
 
 (defun entry-text-p (entry)
-  "True when ENTRY is a text test (a regex/search with a printable pattern)."
-  (and (member (mtype-category (ent-type entry)) '(:regex :search))
-       (printable-pattern-p (ent-test-value entry))))
+  "True when ENTRY should run in the text pass.  Follows file(1)'s
+set_test_type: the string `b'/`t' flags force binary/text; otherwise
+regex/search with a printable pattern are text and everything else is binary."
+  (let ((flags (ent-str-flags entry)))
+    (cond
+      ((find #\b flags) nil)                      ; forced binary
+      ((find #\t flags) t)                        ; forced text
+      ((member (mtype-category (ent-type entry)) '(:regex :search))
+       (printable-pattern-p (ent-test-value entry)))
+      (t nil))))
 
 (defun buffer-textual-p (buffer &optional (limit 4096))
   "True when the first LIMIT bytes of BUFFER are all printable text bytes."

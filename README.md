@@ -131,9 +131,9 @@ continuation semantics, and the `\b` no-space message join.
   unsigned, with `& | ^ + - * / %` masks and `~` inversion
 - Operators `= != < > & ^ ~ x`
 - `string` with the full flag set — `c`/`C` (asymmetric case folding),
-  `W`/`w` (whitespace compaction), `f` (full word), `T` (trim printed value) —
-  plus `pstring` (with the `B/H/h/L/l/J` length-prefix modifiers), `search`,
-  and `regex` (via `cl-ppcre`)
+  `W`/`w` (whitespace compaction), `f` (full word), `T` (trim printed value),
+  and `t`/`b` (force the text/binary pass) — plus `pstring` (with the
+  `B/H/h/L/l/J` length-prefix modifiers), `search`, and `regex` (via `cl-ppcre`)
 - `guid`/`leguid`/`beguid` value tests and canonical GUID formatting
 - `name`/`use` subroutines (including `^name` endianness flipping) and
   `indirect` re-scans
@@ -150,8 +150,8 @@ continuation semantics, and the `\b` no-space message join.
 ### Performance
 
 Matching mirrors `file`'s two-phase strategy: **binary** tests run first in
-strength order, and the ~340 **text** tests (`search`/`regex` with printable
-patterns) are tried only if the data looks textual. Each top-level rule also
+strength order, and the **text** tests (`regex`/`search` with printable
+patterns, plus rules flagged `t`) are tried only if the data looks textual. Each top-level rule also
 carries a precomputed **first-byte fingerprint**, so rules whose fixed offset
 can't possibly match are skipped before any evaluation. Together these take an
 unknown-binary (no-match) identification from ~26 ms to ~0.6 ms, and a typical
@@ -163,8 +163,6 @@ regression test asserting the index never changes the outcome).
 Not a byte-for-byte clone of a specific `file` release. In particular:
 
 - `der` (DER certificate) tests are parsed but not evaluated
-- The `t`/`b` (text-only / binary-only) string flags are accepted but not acted
-  on; all other string flags (`c C W w f T`) are honoured
 - Text detection covers ASCII/UTF-8/UTF-16(BOM)/ISO-8859 with line-terminator
   reporting, but not `file`'s full charset sniffing (code pages, UTF-16
   without a BOM, EBCDIC, etc.)

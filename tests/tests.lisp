@@ -358,7 +358,18 @@
   (is-true  (magic::entry-text-p (magic::parse-magic-line "0	search/9	hello	x")))
   (is-false (magic::entry-text-p (magic::parse-magic-line "0	search/9	\\x00\\x01	x")))
   (is-false (magic::entry-text-p (magic::parse-magic-line "0	string	hello	x")))
-  (is-false (magic::entry-text-p (magic::parse-magic-line "0	belong	1	x"))))
+  (is-false (magic::entry-text-p (magic::parse-magic-line "0	belong	1	x")))
+  ;; t/b flags override the default classification
+  (is-true  (magic::entry-text-p (magic::parse-magic-line "0	string/t	hello	x")))
+  (is-false (magic::entry-text-p (magic::parse-magic-line "0	string/b	hello	x")))
+  (is-false (magic::entry-text-p (magic::parse-magic-line "0	search/9/b	hello	x")))
+  (is-true  (magic::entry-text-p (magic::parse-magic-line "0	search/9/t	\\x01\\x02	x"))))
+
+(test text-only-flag-runs-only-on-text
+  ;; a string/t rule matches textual data but is skipped for binary data
+  (is (string= "text-only"
+               (match-desc (format nil "0	string/t	FOO	text-only") (bv "FOO is plain text"))))
+  (is (null (match-desc (format nil "0	string/t	FOO	text-only") (bv "FOO" 0 1 2 3)))))
 
 (test buffer-textual-p
   (is-true  (magic::buffer-textual-p (bv "plain text")))
