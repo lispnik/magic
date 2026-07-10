@@ -143,9 +143,12 @@ continuation semantics, and the `\b` no-space message join.
 - `date` types rendered in `file`'s ctime style, with UTC/local selection and
   Windows-FILETIME (`*wdate`) conversion
 - Strength scoring that mirrors `file`'s rule ordering
-- Text classification (ASCII / UTF-8 / UTF-16-BOM / ISO-8859, with CRLF/CR/no
-  line-terminator reporting), and the encoding appended to text-type matches
-  the way `file` does (e.g. `XML 1.0 document text, ASCII text`)
+- A faithful port of `file`'s `encoding.c` character-set detection: the 256-entry
+  `text_chars` table and the full ladder — ASCII, UTF-7, UTF-8 (with/without
+  BOM), UTF-32/UTF-16 (by BOM), ISO-8859, Non-ISO extended-ASCII, and EBCDIC —
+  with CRLF/CR/LF/NEL line-terminator reporting. The detected encoding is
+  appended to text-type matches the way `file` does (e.g.
+  `C source text, ASCII text`, `XML 1.0 document text, ASCII text`)
 
 ### Performance
 
@@ -163,9 +166,10 @@ regression test asserting the index never changes the outcome).
 Not a byte-for-byte clone of a specific `file` release. In particular:
 
 - `der` (DER certificate) tests are parsed but not evaluated
-- Text detection covers ASCII/UTF-8/UTF-16(BOM)/ISO-8859 with line-terminator
-  reporting, but not `file`'s full charset sniffing (code pages, UTF-16
-  without a BOM, EBCDIC, etc.)
+- Character-set detection covers what `file` itself detects (UTF-16/32 require a
+  BOM, as they do in `file`); it does not add code-page/charset guessing beyond
+  that. The legacy `names.h` token pass isn't ported — source/document types
+  (`C source text`, `troff … text`) come from the magic database instead
 - Results track the **vendored** database version, which may differ from the
   `file` binary installed on your system (e.g. `font/ttf` vs `font/sfnt`)
 
@@ -182,7 +186,7 @@ $ sbcl --eval '(asdf:load-system "magic/tests")' \
        --eval '(fiveam:run! (quote magic/tests:all-tests))' --quit
 ```
 
-The suite (`tests/`, 180+ checks) covers the low-level parser units
+The suite (`tests/`, 200+ checks) covers the low-level parser units
 (integer/escape/offset parsing, type lookup, masks), printf formatting, numeric
 comparison, and hand-written mini-databases exercising the engine: `pstring`
 length prefixes, relative and negative-from-EOF offsets, ctime/UTC/local/Windows

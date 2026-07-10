@@ -496,12 +496,14 @@ default/clear match tracking.  Returns T if any entry matched."
     (dolist (e entries)
       (let ((cat (mtype-category (ent-type e))))
         (cond
-          ((eq cat :clear) (setf got nil))
           ((and (eq cat :default) got) nil)  ; suppressed
           (t
            (let ((h (try-entry e state acc)))
              (when h
-               (unless (eq cat :clear) (setf got t))
+               ;; CLEAR resets the level's match flag (so a later DEFAULT can
+               ;; fire) but still prints its own message; everything else marks
+               ;; the level as matched.
+               (if (eq cat :clear) (setf got nil) (setf got t))
                (setf any t)
                ;; USE/INDIRECT emit their sub-magic directly; their own message
                ;; field is a placeholder file(1) never prints (e.g. "not_printed").

@@ -435,16 +435,53 @@
   (is (string= "ASCII text, with no line terminators" (classify-desc (bv "hi")))))
 
 (test classify-utf8
-  (is (string= "UTF-8 Unicode text, with no line terminators"
+  (is (string= "Unicode text, UTF-8 text, with no line terminators"
                (classify-desc (bv "caf" #xc3 #xa9))))                  ; café
   (multiple-value-bind (d m cs) (magic::classify-text (bv "caf" #xc3 #xa9))
     (declare (ignore d))
     (is (string= "text/plain" m))
     (is (string= "utf-8" cs))))
 
+(test classify-utf8-with-bom
+  (is (string= "Unicode text, UTF-8 (with BOM) text"
+               (classify-desc (bv #xef #xbb #xbf "hi" 10)))))
+
 (test classify-utf16-bom
-  (is (search "Little-endian UTF-16" (classify-desc (bv #xff #xfe #x68 #x00))))
-  (is (search "Big-endian UTF-16" (classify-desc (bv #xfe #xff #x00 #x68)))))
+  ;; 'h' then LF (LF-only -> no terminator suffix reported)
+  (is (string= "Unicode text, UTF-16, little-endian text"
+               (classify-desc (bv #xff #xfe #x68 #x00 #x0a #x00))))
+  (is (string= "Unicode text, UTF-16, big-endian text"
+               (classify-desc (bv #xfe #xff #x00 #x68 #x00 #x0a)))))
+
+(test classify-utf32-bom
+  (is (string= "Unicode text, UTF-32, little-endian text"
+               (classify-desc (bv #xff #xfe #x00 #x00 #x68 #x00 #x00 #x00
+                                   #x0a #x00 #x00 #x00))))
+  (multiple-value-bind (d m cs)
+      (magic::classify-text (bv #xff #xfe #x00 #x00 #x68 #x00 #x00 #x00))
+    (declare (ignore d m)) (is (string= "utf-32le" cs))))
+
+(test classify-utf7
+  (is (string= "Unicode text, UTF-7" (classify-desc (bv "+/v8 more text")))))
+
+(test classify-non-iso-extended
+  ;; 0x92 (Windows/Mac curly quote) is in the extended class, not ISO-8859
+  (is (string= "Non-ISO extended-ASCII text, with no line terminators"
+               (classify-desc (bv "Mac" #x92 "s")))))
+
+(test classify-ebcdic
+  ;; EBCDIC "H<tab>i" (C8 05 89): the raw 0x05 is a non-text byte so the buffer
+  ;; is only recognisable after the EBCDIC->ASCII transcode
+  (is (string= "EBCDIC text, with no line terminators"
+               (classify-desc (bv #xc8 #x05 #x89)))))
+
+(test line-terminator-variants
+  ;; CRLF and lone LF both present -> both reported, CRLF first
+  (is (string= "ASCII text, with CRLF, LF line terminators"
+               (classify-desc (bv "a" 13 10 "b" 10))))
+  ;; NEL (U+0085) via its UTF-8 encoding C2 85
+  (is (search ", with NEL line terminators"
+              (classify-desc (bv "caf" #xc3 #xa9 #xc2 #x85)))))
 
 (test classify-iso-8859
   (is (string= "ISO-8859 text, with no line terminators"
